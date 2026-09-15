@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>영상 용량 줄이기</title>
+<style>
+  :root{--bg:#f5f6f8;--card:#fff;--text:#1d1f23;--sub:#6b7280;--accent:#3b6cf6;--line:#e3e6eb}
+  @media (prefers-color-scheme:dark){:root{--bg:#15171b;--card:#1f2228;--text:#eceef2;--sub:#9aa1ad;--line:#2e323a}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,"Malgun Gothic",sans-serif;padding:32px 16px}
+  main{max-width:640px;margin:auto}
+  h1{font-size:24px;margin:0 0 6px}
+  p.sub{color:var(--sub);margin:0 0 24px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:16px}
+  #drop{border:2px dashed var(--line);border-radius:12px;padding:40px 16px;text-align:center;cursor:pointer;transition:.15s}
+  #drop.over{border-color:var(--accent);background:rgba(59,108,246,.06)}
+  label.row{display:flex;align-items:center;gap:10px;margin-top:14px;color:var(--sub)}
+  input[type=number]{width:80px;padding:6px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text)}
+  button{background:var(--accent);color:#fff;border:0;border-radius:10px;padding:12px 18px;font-size:15px;cursor:pointer;width:100%;margin-top:16px}
+  button:disabled{opacity:.5;cursor:default}
+  .bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:12px}
+  .bar div{height:100%;width:0;background:var(--accent);transition:width .2s}
+  #status{margin-top:10px;color:var(--sub);font-size:14px}
+  video{width:100%;border-radius:10px;margin-top:12px;background:#000}
+  a.dl{display:block;text-align:center;background:#16a34a;color:#fff;border-radius:10px;padding:12px;margin-top:12px;text-decoration:none}
+</style>
+</head>
+<body>
+<main>
+  <h1>🎬 영상 용량 줄이기</h1>
+  <p class="sub">영상을 넣으면 목표 용량 이하로 압축합니다. 파일은 서버로 올라가지 않고 브라우저 안에서만 처리돼요.</p>
+
+  <div class="card">
+    <div id="drop">여기로 영상을 끌어오거나 클릭해서 선택<br><small id="fname" style="color:var(--sub)"></small></div>
+    <input type="file" id="file" accept="video/*" hidden>
+    <label class="row">목표 용량 <input type="number" id="target" value="10" min="1" step="0.5"> MB 이하</label>
+    <button id="go" disabled>압축 시작</button>
+    <div class="bar"><div id="prog"></div></div>
+    <div id="status"></div>
+  </div>
+
+  <div class="card" id="result" hidden>
+    <strong>결과</strong>
+    <div id="info" style="color:var(--sub);margin-top:6px"></div>
+    <video id="out" controls></video>
+    <a class="dl" id="dl">다운로드</a>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let file = null;
+
+$('drop').onclick = () => $('file').click();
+$('file').onchange = e => pick(e.target.files[0]);
+['dragover','dragenter'].forEach(t => $('drop').addEventListener(t, e => { e.preventDefault(); $('drop').classList.add('over'); }));
+['dragleave','drop'].forEach(t => $('drop').addEventListener(t, e => { e.preventDefault(); $('drop').classList.remove('over'); }));
+$('drop').addEventListener('drop', e => pick(e.dataTransfer.files[0]));
+
+function pick(f){
+  if(!f || !f.type.startsWith('video/')) return;
+  file = f;
+  $('fname').textContent = `${f.name} (${mb(f.size)})`;
+  $('go').disabled = false;
+  $('result').hidden = true;
+}
+const mb = b => (b/1048576).toFixed(2) + ' MB';
+
+function pickMime(){
+  const list = ['video/mp4;codecs=avc1,mp4a.40.2','video/mp4','video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
+  return list.find(m => MediaRecorder.isTypeSupported(m)) || '';
+}
+
+function loadVideo(url){
+  return new Promise((res, rej) => {
+    const v = document.createElement('video');
+    v.src = url; v.playsInline = true; v.preload = 'auto';
+    v.onloadedmetadata = () => res(v);
+    v.onerror = () => rej(new Error('이 영상 형식은 브라우저에서 열 수 없어요.'));
+  });
+}
+
+async function encode(url, totalBits, factor){
+  const v = await loadVideo(url);
+  const dur = v.duration;
+  const audioBps = 64000;
+  const videoBps = Math.max(80000, Math.floor(totalBits * factor / dur - audioBps));
+
+  // 비트레이트에 맞춰 해상도 결정
+  const maxH = videoBps > 2500000 ? 1080 : videoBps > 1200000 ? 720 : videoBps > 600000 ? 480 : 360;
+  const scale = Math.min(1, maxH / Math.min(v.videoWidth, v.videoHeight));
+  const w = Math.round(v.videoWidth * scale / 2) * 2;
+  const h = Math.round(v.videoHeight * scale / 2) * 2;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  const stream = canvas.captureStream(30);
+
+  // 오디오: 스피커로 내보내지 않고 녹화에만 사용
+  const ac = new AudioContext();
+  const src = ac.createMediaElementSource(v);
+  const dest = ac.createMediaStreamDestination();
+  src.connect(dest);
+  dest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
+
+  const mime = pickMime();
+  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: videoBps, audioBitsPerSecond: audioBps });
+  const chunks = [];
+  rec.ondataavailable = e => e.data.size && chunks.push(e.data);
+
+  return new Promise((res, rej) => {
+    let raf;
+    const draw = () => {
+      ctx.drawImage(v, 0, 0, w, h);
+      $('prog').style.width = (v.currentTime / dur * 100).toFixed(1) + '%';
+      raf = requestAnimationFrame(draw);
+    };
+    rec.onstop = () => {
+      cancelAnimationFrame(raf); ac.close();
+      res({ blob: new Blob(chunks, { type: mime.split(';')[0] }), w, h, videoBps });
+    };
+    v.onended = () => rec.stop();
+    v.onerror = () => rej(new Error('재생 중 오류가 발생했어요.'));
+    rec.start(1000);
+    ac.resume().then(() => v.play()).then(draw).catch(rej);
+  });
+}
+
+$('go').onclick = async () => {
+  const targetMB = parseFloat($('target').value) || 10;
+  const limit = targetMB * 1048576;
+  $('go').disabled = true; $('result').hidden = true;
+  const url = URL.createObjectURL(file);
+  try {
+    let factor = 0.9, out;
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      $('status').textContent = `압축 중... (${attempt}차 시도) — 영상 길이만큼 시간이 걸려요. 탭을 닫지 마세요.`;
+      out = await encode(url, limit * 8, factor);
+      if (out.blob.size <= limit) break;
+      factor *= (limit / out.blob.size) * 0.9;
+    }
+    const ok = out.blob.size <= limit;
+    const ext = out.blob.type.includes('mp4') ? 'mp4' : 'webm';
+    const outUrl = URL.createObjectURL(out.blob);
+    $('out').src = outUrl;
+    $('dl').href = outUrl;
+    $('dl').download = file.name.replace(/\.[^.]+$/, '') + `_압축.${ext}`;
+    $('info').textContent = `${mb(file.size)} → ${mb(out.blob.size)} · ${out.w}×${out.h} · ${ext.toUpperCase()}` + (ok ? '' : ' (목표보다 커요 — 영상이 너무 길 수 있어요)');
+    $('status').textContent = ok ? '완료!' : '최대한 줄였지만 목표 용량을 넘었어요.';
+    $('prog').style.width = '100%';
+    $('result').hidden = false;
+  } catch (e) {
+    $('status').textContent = '오류: ' + e.message;
+  }
+  $('go').disabled = false;
+};
+</script>
+</body>
+</html>
