@@ -44,7 +44,12 @@
     <strong>결과</strong>
     <div id="info" style="color:var(--sub);margin-top:6px"></div>
     <video id="out" controls></video>
-    <a class="dl" id="dl">다운로드</a>
+    <button id="share" hidden style="background:#16a34a">📱 갤러리에 저장 / 공유</button>
+    <a class="dl" id="dl">파일로 다운로드</a>
+    <div id="hint" style="color:var(--sub);font-size:13px;margin-top:8px" hidden>
+      iPhone: 공유 창에서 <b>"비디오 저장"</b>을 누르세요.<br>
+      Android: 공유 창에서 <b>Google 포토</b>나 <b>갤러리</b>를 고르세요. 다운로드한 파일은 보통 몇 초 뒤 갤러리의 'Download' 앨범에 나타나요.
+    </div>
   </div>
 </main>
 
@@ -147,6 +152,10 @@ $('go').onclick = async () => {
     $('out').src = outUrl;
     $('dl').href = outUrl;
     $('dl').download = file.name.replace(/\.[^.]+$/, '') + `_압축.${ext}`;
+    const outFile = new File([out.blob], $('dl').download, { type: out.blob.type });
+    const canShare = navigator.canShare && navigator.canShare({ files: [outFile] });
+    $('share').hidden = $('hint').hidden = !canShare;
+    $('share').onclick = () => navigator.share({ files: [outFile] }).catch(() => {});
     $('info').textContent = `${mb(file.size)} → ${mb(out.blob.size)} · ${out.w}×${out.h} · ${ext.toUpperCase()}` + (ok ? '' : ' (목표보다 커요 — 영상이 너무 길 수 있어요)');
     $('status').textContent = ok ? '완료!' : '최대한 줄였지만 목표 용량을 넘었어요.';
     $('prog').style.width = '100%';
