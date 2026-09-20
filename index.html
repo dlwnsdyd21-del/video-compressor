@@ -4,167 +4,250 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>영상 용량 줄이기</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>">
 <style>
-  :root{--bg:#f5f6f8;--card:#fff;--text:#1d1f23;--sub:#6b7280;--accent:#3b6cf6;--line:#e3e6eb}
-  @media (prefers-color-scheme:dark){:root{--bg:#15171b;--card:#1f2228;--text:#eceef2;--sub:#9aa1ad;--line:#2e323a}}
+  :root{--bg:#f5f6f8;--card:#fff;--text:#1d1f23;--sub:#6b7280;--accent:#3b6cf6;--line:#e3e6eb;--soft:#eef1f6}
+  @media (prefers-color-scheme:dark){:root{--bg:#15171b;--card:#1f2228;--text:#eceef2;--sub:#9aa1ad;--line:#2e323a;--soft:#262a31}}
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,"Malgun Gothic",sans-serif;padding:32px 16px}
-  main{max-width:640px;margin:auto}
-  h1{font-size:24px;margin:0 0 6px}
-  p.sub{color:var(--sub);margin:0 0 24px}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:16px}
-  #drop{border:2px dashed var(--line);border-radius:12px;padding:40px 16px;text-align:center;cursor:pointer;transition:.15s}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,"Malgun Gothic",sans-serif;padding-block:28px;padding-left:16px;padding-right:16px;-webkit-text-size-adjust:100%}
+  main{max-width:600px;margin:auto}
+  h1{font-size:22px;margin:0 0 6px}
+  p.sub{color:var(--sub);margin:0 0 20px;font-size:14px;line-height:1.5}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px}
+  #drop{border:2px dashed var(--line);border-radius:12px;padding:34px 14px;text-align:center;cursor:pointer}
   #drop.over{border-color:var(--accent);background:rgba(59,108,246,.06)}
-  label.row{display:flex;align-items:center;gap:10px;margin-top:14px;color:var(--sub)}
-  input[type=number]{width:80px;padding:6px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text)}
-  button{background:var(--accent);color:#fff;border:0;border-radius:10px;padding:12px 18px;font-size:15px;cursor:pointer;width:100%;margin-top:16px}
-  button:disabled{opacity:.5;cursor:default}
-  .bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:12px}
-  .bar div{height:100%;width:0;background:var(--accent);transition:width .2s}
-  #status{margin-top:10px;color:var(--sub);font-size:14px}
+  #fname{display:block;margin-top:8px;color:var(--sub);font-size:13px;line-height:1.5}
+  .field{margin-top:18px}
+  .field > span{display:block;font-size:14px;font-weight:600;margin-bottom:8px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px}
+  .chips button{flex:1 1 0;min-width:48px;background:var(--soft);color:var(--text);border:1px solid var(--line);border-radius:999px;padding:9px 6px;font-size:14px;cursor:pointer;width:auto;margin:0}
+  .chips button[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  .inline{display:flex;align-items:center;gap:8px}
+  input[type=number]{width:86px;padding:9px;border-radius:9px;border:1px solid var(--line);background:var(--bg);color:var(--text);font-size:15px}
+  label.check{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--sub);margin-top:16px}
+  input[type=checkbox]{width:18px;height:18px}
+  #estimate{background:var(--soft);border-radius:11px;padding:13px;margin-top:18px;font-size:14px;line-height:1.8}
+  #estimate b{font-size:16px}
+  .muted{color:var(--sub)}
+  button.main{background:var(--accent);color:#fff;border:0;border-radius:11px;padding:14px;font-size:16px;font-weight:600;cursor:pointer;width:100%;margin-top:16px}
+  button.main:disabled{opacity:.45}
+  .bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:14px}
+  .bar div{height:100%;width:0;background:var(--accent);transition:width .25s}
+  #status{margin-top:10px;color:var(--sub);font-size:14px;line-height:1.5}
   video{width:100%;border-radius:10px;margin-top:12px;background:#000}
-  a.dl{display:block;text-align:center;background:#16a34a;color:#fff;border-radius:10px;padding:12px;margin-top:12px;text-decoration:none}
+  .save{display:block;width:100%;text-align:center;border:0;border-radius:11px;padding:14px;margin-top:10px;font-size:16px;font-weight:600;text-decoration:none;cursor:pointer}
+  #save{background:#16a34a;color:#fff}
+  #dl{background:var(--soft);color:var(--text);border:1px solid var(--line)}
+  #hint{color:var(--sub);font-size:13px;line-height:1.6;margin-top:12px}
 </style>
 </head>
 <body>
 <main>
   <h1>🎬 영상 용량 줄이기</h1>
-  <p class="sub">영상을 넣으면 목표 용량 이하로 압축합니다. 파일은 서버로 올라가지 않고 브라우저 안에서만 처리돼요.</p>
+  <p class="sub">영상을 넣으면 원하는 용량 이하로 줄여줍니다. 파일은 서버로 올라가지 않고 내 휴대폰·컴퓨터 안에서만 처리돼요.</p>
+
+  <div class="card" id="inapp" hidden style="border-color:#f59e0b;background:rgba(245,158,11,.08)">
+    <strong>⚠️ 카카오톡·인스타 안에서 열면 저장이 안 돼요</strong>
+    <p class="sub" style="margin:8px 0 0">앱 안에 들어 있는 간이 브라우저는 파일 저장을 막아 둡니다. 아래 버튼으로 <b>Chrome</b>에서 열어 주세요.
+      (버튼이 안 되면 오른쪽 위 <b>⋮</b> → <b>다른 브라우저로 열기</b>)</p>
+    <a class="save" id="openChrome" style="background:#f59e0b;color:#fff;margin-top:12px">Chrome으로 열기</a>
+    <button class="save" id="copyLink" style="background:var(--soft);color:var(--text);border:1px solid var(--line)">주소 복사하기</button>
+  </div>
 
   <div class="card">
-    <div id="drop">여기로 영상을 끌어오거나 클릭해서 선택<br><small id="fname" style="color:var(--sub)"></small></div>
+    <div id="drop">영상을 여기에 넣거나 눌러서 선택<span id="fname"></span></div>
     <input type="file" id="file" accept="video/*" hidden>
-    <label class="row">목표 용량 <input type="number" id="target" value="10" min="1" step="0.5"> MB 이하</label>
-    <button id="go" disabled>압축 시작</button>
+
+    <div class="field">
+      <span>목표 용량</span>
+      <div class="chips" id="sizeChips">
+        <button data-mb="8">8MB</button>
+        <button data-mb="10" aria-pressed="true">10MB</button>
+        <button data-mb="20">20MB</button>
+        <button data-mb="50">50MB</button>
+      </div>
+      <div class="inline" style="margin-top:8px">
+        <span class="muted" style="font-size:14px">직접 입력</span>
+        <input type="number" id="target" value="10" min="1" max="2000" step="1"> <span class="muted">MB</span>
+      </div>
+    </div>
+
+    <div class="field">
+      <span>배속 <span class="muted" style="font-weight:400">— 빠르게 할수록 용량도 줄어요</span></span>
+      <div class="chips" id="speedChips">
+        <button data-x="0.5">0.5배</button>
+        <button data-x="1" aria-pressed="true">1배</button>
+        <button data-x="1.5">1.5배</button>
+        <button data-x="2">2배</button>
+        <button data-x="4">4배</button>
+      </div>
+    </div>
+
+    <label class="check"><input type="checkbox" id="mute"> 소리 빼기 (용량을 조금 더 줄여요)</label>
+
+    <div id="estimate" hidden></div>
+    <button class="main" id="go" disabled>압축 시작</button>
     <div class="bar"><div id="prog"></div></div>
     <div id="status"></div>
   </div>
 
   <div class="card" id="result" hidden>
     <strong>결과</strong>
-    <div id="info" style="color:var(--sub);margin-top:6px"></div>
-    <video id="out" controls></video>
-    <button id="share" hidden style="background:#16a34a">📱 갤러리에 저장 / 공유</button>
-    <a class="dl" id="dl">파일로 다운로드</a>
-    <div id="hint" style="color:var(--sub);font-size:13px;margin-top:8px" hidden>
-      iPhone: 공유 창에서 <b>"비디오 저장"</b>을 누르세요.<br>
-      Android: 공유 창에서 <b>Google 포토</b>나 <b>갤러리</b>를 고르세요. 다운로드한 파일은 보통 몇 초 뒤 갤러리의 'Download' 앨범에 나타나요.
-    </div>
+    <div id="info" class="muted" style="margin-top:6px;font-size:14px;line-height:1.6"></div>
+    <video id="out" controls playsinline></video>
+    <button class="save" id="save" hidden>📱 갤러리에 저장 / 공유</button>
+    <a class="save" id="dl">⬇️ 파일로 저장</a>
+    <div id="hint"></div>
   </div>
 </main>
 
-<script>
-const $ = id => document.getElementById(id);
-let file = null;
+<script type="module">
+import { probe, plan as makePlan, compress } from './compress.js';
 
+const $ = id => document.getElementById(id);
+const MB = 1048576;
+const fmt = b => (b / MB).toFixed(2) + 'MB';
+const clock = s => s < 60 ? `${Math.round(s)}초` : `${Math.floor(s / 60)}분 ${Math.round(s % 60)}초`;
+
+let file = null, meta = null, speed = 1;
+const opts = () => ({ targetMB: Math.max(1, +$('target').value || 10), speed, mute: $('mute').checked });
+
+/* ---------- 앱 안의 간이 브라우저(WebView) 감지 ----------
+   카카오톡·인스타그램 등에서 링크를 누르면 앱 안의 간이 브라우저가 열린다.
+   거기서는 navigator.share 가 없고 blob: 다운로드도 조용히 막혀서
+   ("지원하지 않는 파일 형식입니다") 아무것도 저장되지 않는다. 그래서 Chrome 으로 보낸다. */
+const UA = navigator.userAgent || '';
+const inApp = /KAKAOTALK|FBAN|FBAV|FB_IAB|Instagram|NAVER\(inapp|DaumApps|Line\/|Snapchat|KAKAOSTORY/i.test(UA)
+  || (/Android/i.test(UA) && /; wv\)/i.test(UA));   // 안드로이드 WebView 표시
+if (inApp) {
+  $('inapp').hidden = false;
+  const url = location.href.split('#')[0];
+  $('openChrome').href = /Android/i.test(UA)
+    ? `intent://${url.replace(/^https?:\/\//, '')}#Intent;scheme=https;package=com.android.chrome;end`
+    : url;   // iPhone 은 인앱 브라우저의 '사파리로 열기' 안내를 따른다
+  $('copyLink').onclick = async () => {
+    try { await navigator.clipboard.writeText(url); $('copyLink').textContent = '복사했어요! 브라우저에 붙여넣으세요'; }
+    catch { prompt('이 주소를 복사해서 브라우저에 붙여넣으세요', url); }
+  };
+}
+
+/* ---------- 파일 선택 ---------- */
 $('drop').onclick = () => $('file').click();
 $('file').onchange = e => pick(e.target.files[0]);
-['dragover','dragenter'].forEach(t => $('drop').addEventListener(t, e => { e.preventDefault(); $('drop').classList.add('over'); }));
-['dragleave','drop'].forEach(t => $('drop').addEventListener(t, e => { e.preventDefault(); $('drop').classList.remove('over'); }));
+['dragover', 'dragenter'].forEach(t => $('drop').addEventListener(t, e => { e.preventDefault(); $('drop').classList.add('over'); }));
+['dragleave', 'drop'].forEach(t => $('drop').addEventListener(t, e => { e.preventDefault(); $('drop').classList.remove('over'); }));
 $('drop').addEventListener('drop', e => pick(e.dataTransfer.files[0]));
 
-function pick(f){
-  if(!f || !f.type.startsWith('video/')) return;
-  file = f;
-  $('fname').textContent = `${f.name} (${mb(f.size)})`;
-  $('go').disabled = false;
+async function pick(f) {
+  if (!f || !f.type.startsWith('video/')) return;
+  file = f; meta = null;
+  $('fname').textContent = `${f.name} · ${fmt(f.size)} · 확인 중...`;
+  $('go').disabled = true;
   $('result').hidden = true;
-}
-const mb = b => (b/1048576).toFixed(2) + ' MB';
-
-function pickMime(){
-  const list = ['video/mp4;codecs=avc1,mp4a.40.2','video/mp4','video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
-  return list.find(m => MediaRecorder.isTypeSupported(m)) || '';
-}
-
-function loadVideo(url){
-  return new Promise((res, rej) => {
-    const v = document.createElement('video');
-    v.src = url; v.playsInline = true; v.preload = 'auto';
-    v.onloadedmetadata = () => res(v);
-    v.onerror = () => rej(new Error('이 영상 형식은 브라우저에서 열 수 없어요.'));
-  });
-}
-
-async function encode(url, totalBits, factor){
-  const v = await loadVideo(url);
-  const dur = v.duration;
-  const audioBps = 64000;
-  const videoBps = Math.max(80000, Math.floor(totalBits * factor / dur - audioBps));
-
-  // 비트레이트에 맞춰 해상도 결정
-  const maxH = videoBps > 2500000 ? 1080 : videoBps > 1200000 ? 720 : videoBps > 600000 ? 480 : 360;
-  const scale = Math.min(1, maxH / Math.min(v.videoWidth, v.videoHeight));
-  const w = Math.round(v.videoWidth * scale / 2) * 2;
-  const h = Math.round(v.videoHeight * scale / 2) * 2;
-
-  const canvas = document.createElement('canvas');
-  canvas.width = w; canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  const stream = canvas.captureStream(30);
-
-  // 오디오: 스피커로 내보내지 않고 녹화에만 사용
-  const ac = new AudioContext();
-  const src = ac.createMediaElementSource(v);
-  const dest = ac.createMediaStreamDestination();
-  src.connect(dest);
-  dest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
-
-  const mime = pickMime();
-  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: videoBps, audioBitsPerSecond: audioBps });
-  const chunks = [];
-  rec.ondataavailable = e => e.data.size && chunks.push(e.data);
-
-  return new Promise((res, rej) => {
-    let raf;
-    const draw = () => {
-      ctx.drawImage(v, 0, 0, w, h);
-      $('prog').style.width = (v.currentTime / dur * 100).toFixed(1) + '%';
-      raf = requestAnimationFrame(draw);
-    };
-    rec.onstop = () => {
-      cancelAnimationFrame(raf); ac.close();
-      res({ blob: new Blob(chunks, { type: mime.split(';')[0] }), w, h, videoBps });
-    };
-    v.onended = () => rec.stop();
-    v.onerror = () => rej(new Error('재생 중 오류가 발생했어요.'));
-    rec.start(1000);
-    ac.resume().then(() => v.play()).then(draw).catch(rej);
-  });
-}
-
-$('go').onclick = async () => {
-  const targetMB = parseFloat($('target').value) || 10;
-  const limit = targetMB * 1048576;
-  $('go').disabled = true; $('result').hidden = true;
-  const url = URL.createObjectURL(file);
   try {
-    let factor = 0.9, out;
-    for (let attempt = 1; attempt <= 4; attempt++) {
-      $('status').textContent = `압축 중... (${attempt}차 시도) — 영상 길이만큼 시간이 걸려요. 탭을 닫지 마세요.`;
-      out = await encode(url, limit * 8, factor);
-      if (out.blob.size <= limit) break;
-      factor *= (limit / out.blob.size) * 0.9;
-    }
-    const ok = out.blob.size <= limit;
-    const ext = out.blob.type.includes('mp4') ? 'mp4' : 'webm';
-    const outUrl = URL.createObjectURL(out.blob);
-    $('out').src = outUrl;
-    $('dl').href = outUrl;
-    $('dl').download = file.name.replace(/\.[^.]+$/, '') + `_압축.${ext}`;
-    const outFile = new File([out.blob], $('dl').download, { type: out.blob.type });
-    const canShare = navigator.canShare && navigator.canShare({ files: [outFile] });
-    $('share').hidden = $('hint').hidden = !canShare;
-    $('share').onclick = () => navigator.share({ files: [outFile] }).catch(() => {});
-    $('info').textContent = `${mb(file.size)} → ${mb(out.blob.size)} · ${out.w}×${out.h} · ${ext.toUpperCase()}` + (ok ? '' : ' (목표보다 커요 — 영상이 너무 길 수 있어요)');
-    $('status').textContent = ok ? '완료!' : '최대한 줄였지만 목표 용량을 넘었어요.';
-    $('prog').style.width = '100%';
-    $('result').hidden = false;
+    meta = await probe(f);
+    $('fname').textContent = `${f.name} · ${fmt(f.size)} · ${meta.w}×${meta.h} · ${clock(meta.dur)}`;
+    $('go').disabled = false;
+  } catch (e) {
+    $('fname').textContent = '이 영상은 브라우저에서 열 수 없어요. 다른 파일을 써주세요.';
+  }
+  refresh();
+}
+
+/* ---------- 설정 ---------- */
+function chips(box, fn) {
+  $(box).onclick = e => {
+    const b = e.target.closest('button'); if (!b) return;
+    [...$(box).children].forEach(c => c.setAttribute('aria-pressed', c === b));
+    fn(b); refresh();
+  };
+}
+chips('sizeChips', b => { $('target').value = b.dataset.mb; });
+chips('speedChips', b => { speed = +b.dataset.x; });
+$('target').oninput = () => {
+  [...$('sizeChips').children].forEach(c => c.setAttribute('aria-pressed', c.dataset.mb === $('target').value));
+  refresh();
+};
+$('mute').onchange = refresh;
+
+/* ---------- 예상치 미리보기 ---------- */
+const quality = bps => bps > 2000000 ? '아주 좋음' : bps > 1000000 ? '좋음' : bps > 500000 ? '보통' : bps > 250000 ? '조금 흐림' : '많이 흐림';
+
+function refresh() {
+  if (!file || !meta) { $('estimate').hidden = true; return; }
+  const p = makePlan(meta, opts());
+  $('estimate').hidden = false;
+  $('estimate').innerHTML = `
+    예상 용량 <b>최대 ${fmt(p.estBytes)}</b> <span class="muted">(보통 이보다 작게 나와요)</span> ${p.limitedBySource ? '<span class="muted">(원본 화질이 한계라 목표보다 작게 나와요)</span>' : `<span class="muted">(목표 ${p.targetMB}MB 이하)</span>`}<br>
+    예상 화질 <b>${p.w}×${p.h}</b> <span class="muted">· ${quality(p.videoBps)}</span><br>
+    영상 길이 <b>${clock(p.outDur)}</b> <span class="muted">${speed !== 1 ? `· ${speed}배속 (원본 ${clock(meta.dur)})` : ''}${p.mute ? ' · 소리 없음' : ''}</span><br>
+    <span class="muted">걸리는 시간 약 ${clock(p.outDur)} — 영상을 재생하면서 압축해요</span>`;
+}
+
+/* ---------- 압축 ---------- */
+$('go').onclick = async () => {
+  $('go').disabled = true; $('result').hidden = true;
+  let wake = null;
+  try { wake = await navigator.wakeLock?.request('screen'); } catch {}
+  try {
+    const est = makePlan(meta, opts());
+    const r = await compress(file, meta, opts(), {
+      onProgress: f => { $('prog').style.width = (f * 100).toFixed(1) + '%'; },
+      onAttempt: n => {
+        $('prog').style.width = '0%';
+        $('status').textContent = n === 1
+          ? `압축 중... 약 ${clock(est.outDur)} 걸려요. 화면을 켜 둔 채 기다려 주세요.`
+          : `조금 더 줄이는 중... (${n}번째 시도)`;
+      },
+      onPause: paused => {
+        if (paused) $('status').textContent = '⏸ 다른 화면으로 넘어가서 잠시 멈췄어요. 이 화면으로 돌아오면 이어서 합니다.';
+        else $('status').textContent = '다시 압축하는 중...';
+      },
+    });
+    show(r.blob, r.plan, r.withinTarget, r.warnings);
   } catch (e) {
     $('status').textContent = '오류: ' + e.message;
+  } finally {
+    wake?.release?.();
+    $('go').disabled = false;
   }
-  $('go').disabled = false;
 };
+
+/* ---------- 결과 / 저장 ---------- */
+function show(blob, p, ok, warnings = []) {
+  const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
+  // 파일 이름에 한글이 있으면 일부 앱이 거부해서 영문·숫자만 쓴다
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+  const name = `video_${stamp}.${ext}`;
+  const url = URL.createObjectURL(blob);
+  $('out').src = url;
+  $('dl').href = url;
+  $('dl').download = name;
+  $('info').innerHTML = `${fmt(file.size)} → <b>${fmt(blob.size)}</b> · ${p.w}×${p.h} · ${ext.toUpperCase()}`
+    + `${speed !== 1 ? ` · ${speed}배속` : ''}${p.mute ? ' · 소리 없음' : ''}`
+    + (ok ? '' : `<br><span style="color:#dc2626">목표 ${p.targetMB}MB를 넘었어요. 배속을 올리거나 목표를 키워보세요.</span>`)
+    + warnings.map(w => `<br><span style="color:#dc2626">⚠️ ${w}</span>`).join('');
+  $('status').textContent = '완료!';
+  $('prog').style.width = '100%';
+
+  // 공유는 반드시 클릭 핸들러 안에서 곧바로 호출해야 한다 (await 를 끼우면 안드로이드가 막는다)
+  const f = new File([blob], name, { type: blob.type });
+  const canShare = navigator.canShare && navigator.canShare({ files: [f] });
+  $('save').hidden = !canShare;
+  $('save').onclick = () => {
+    navigator.share({ files: [f] }).catch(err => {
+      if (err && err.name === 'AbortError') return;          // 사용자가 취소한 것 — 무시
+      $('hint').insertAdjacentHTML('afterbegin',
+        `<div style="color:#dc2626">공유에 실패했어요 (${err && err.name || err}). 아래 <b>파일로 저장</b>을 써주세요.</div>`);
+    });
+  };
+  $('hint').innerHTML = canShare
+    ? `<b>iPhone</b> 공유 창에서 <b>비디오 저장</b>을 누르면 사진 앱에 들어가요.<br>
+       <b>갤럭시·안드로이드</b> 공유 창에서 <b>갤러리</b>나 <b>Google 포토</b>를 고르세요. 목록에 없으면 아래 <b>파일로 저장</b>을 누른 뒤, 갤러리 앱의 <b>앨범 → Download</b>에서 확인하세요.`
+    : `저장한 파일은 <b>다운로드</b> 폴더에 들어가요. 휴대폰이면 갤러리 앱의 <b>앨범 → Download</b>에서 확인하세요.`;
+  $('result').hidden = false;
+  $('result').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
 </script>
 </body>
 </html>

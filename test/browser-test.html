@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ko">
+<head><meta charset="utf-8"><title>compress.js 브라우저 테스트</title>
+<style>body{font-family:monospace;padding:16px;background:#111;color:#ddd}b{color:#6cf}.ok{color:#5d5}.bad{color:#f77}</style>
+</head>
+<body>
+<h3>compress.js 브라우저 테스트</h3>
+<pre id="log">준비 중...</pre>
+<script type="module">
+/* 실제 브라우저에서 compress.js 전체 흐름을 돌려보고, 결과 파일을 테스트 서버로 올려
+   Node 쪽에서 ffprobe 로 검증할 수 있게 한다.
+   사용법: node serve.mjs 로 띄운 뒤 http://localhost:8787/test/browser-test.html?src=/fixture.mp4&target=3&speed=2 */
+import { probe, plan, compress, pickMime, repackage } from '../compress.js';
+
+const q = new URLSearchParams(location.search);
+const SRC = q.get('src') || '/fixture.mp4';
+const targetMB = +(q.get('target') || 3);
+const speed = +(q.get('speed') || 1);
+const mute = q.get('mute') === '1';
+const el = document.getElementById('log');
+const lines = [];
+const say = (s, cls) => {
+  lines.push(cls ? `<span class="${cls}">${s}</span>` : s);
+  el.innerHTML = lines.join('\n');
+  navigator.sendBeacon?.('/log', s.replace(/<[^>]+>/g, ''));
+};
+
+try {
+  say(`지원 mimeType: <b>${pickMime() || '없음'}</b>`);
+
+  /* mode=repack: 이미 녹화해 둔 조각난 MP4 를 repackage() 만 통과시켜 본다.
+     (브라우저 창이 가려져 있어 실제 녹화를 못 할 때 통합 경로만 확인하는 용도) */
+  if (q.get('mode') === 'repack') {
+    const raw = new Blob([await (await fetch(SRC)).arrayBuffer()], { type: 'video/mp4' });
+    say(`입력(조각난 MP4): ${(raw.size / 1048576).toFixed(2)}MB`);
+    const r = await repackage(raw);
+    say(`remuxed=${r.remuxed} type=${r.blob.type} size=${(r.blob.size / 1048576).toFixed(2)}MB`, r.remuxed ? 'ok' : 'bad');
+    say(`info=${JSON.stringify(r.info || null)}`);
+    say(`warnings=${JSON.stringify(r.warnings)}`);
+    const shareFile = new File([r.blob], 'video_test.mp4', { type: r.blob.type });
+    say(`canShare(files)=${!!(navigator.canShare && navigator.canShare({ files: [shareFile] }))}`);
+    await fetch('/upload/repacked.mp4', { method: 'POST', body: r.blob });
+    say('업로드 완료: repacked.mp4', 'ok');
+    say('DONE', 'ok');
+    throw { handled: true };
+  }
+  const buf = await (await fetch(SRC)).blob();
+  const file = new File([buf], 'fixture.mp4', { type: 'video/mp4' });
+  say(`원본: ${(file.size / 1048576).toFixed(2)}MB`);
+
+  const meta = await probe(file);
+  say(`probe: ${meta.w}x${meta.h}, ${meta.dur.toFixed(2)}초`);
+
+  const p = plan(meta, { targetMB, speed, mute });
+  say(`계획: ${p.w}x${p.h} @ ${(p.videoBps / 1000).toFixed(0)}kbps, 예상 ${(p.estBytes / 1048576).toFixed(2)}MB, 결과 길이 ${p.outDur.toFixed(2)}초`);
+
+  const t0 = performance.now();
+  const r = await compress(file, meta, { targetMB, speed, mute }, {
+    onAttempt: n => say(`녹화 ${n}번째 시도...`),
+  });
+  const secs = ((performance.now() - t0) / 1000).toFixed(1);
+  say(`결과: ${(r.blob.size / 1048576).toFixed(2)}MB, type=${r.blob.type}, remux=${r.remuxed}, 목표이내=${r.withinTarget}, 걸린시간=${secs}초`,
+      r.withinTarget ? 'ok' : 'bad');
+
+  const name = `out_t${targetMB}_x${speed}${mute ? '_mute' : ''}.${r.blob.type.includes('mp4') ? 'mp4' : 'webm'}`;
+  await fetch('/upload/' + name, { method: 'POST', body: r.blob });
+  say(`업로드 완료: ${name}`, 'ok');
+  say('DONE', 'ok');
+} catch (e) {
+  if (!(e && e.handled)) {
+    say('실패: ' + (e && e.message || e), 'bad');
+    say('DONE');
+  }
+}
+</script>
+</body>
+</html>
