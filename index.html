@@ -24,6 +24,8 @@
   .chips button[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
   .inline{display:flex;align-items:center;gap:8px}
   input[type=number]{width:86px;padding:9px;border-radius:9px;border:1px solid var(--line);background:var(--bg);color:var(--text);font-size:15px}
+  input[type=range]{width:100%;margin:2px 0 0;accent-color:var(--accent);height:28px}
+  .ticks{display:flex;justify-content:space-between;color:var(--sub);font-size:12px;margin-top:-2px}
   label.check{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--sub);margin-top:16px}
   input[type=checkbox]{width:18px;height:18px}
   #estimate{background:var(--soft);border-radius:11px;padding:13px;margin-top:18px;font-size:14px;line-height:1.8}
@@ -73,14 +75,10 @@
     </div>
 
     <div class="field">
-      <span>배속 <span class="muted" style="font-weight:400">— 빠르게 할수록 용량도 줄어요</span></span>
-      <div class="chips" id="speedChips">
-        <button data-x="0.5">0.5배</button>
-        <button data-x="1" aria-pressed="true">1배</button>
-        <button data-x="1.5">1.5배</button>
-        <button data-x="2">2배</button>
-        <button data-x="4">4배</button>
-      </div>
+      <span>배속 <b id="speedVal" style="color:var(--accent)">1배</b> <span class="muted" style="font-weight:400">— 빠르게 할수록 용량도 줄어요</span></span>
+      <input type="range" id="speed" min="0.5" max="15" step="0.5" value="1">
+      <div class="ticks"><span>0.5배</span><span>5배</span><span>10배</span><span>15배</span></div>
+      <div id="speedNote" class="muted" style="font-size:13px;margin-top:6px" hidden></div>
     </div>
 
     <label class="check"><input type="checkbox" id="mute"> 소리 빼기 (용량을 조금 더 줄여요)</label>
@@ -163,7 +161,17 @@ function chips(box, fn) {
   };
 }
 chips('sizeChips', b => { $('target').value = b.dataset.mb; });
-chips('speedChips', b => { speed = +b.dataset.x; });
+
+$('speed').oninput = () => {
+  speed = +$('speed').value;
+  $('speedVal').textContent = `${speed}배`;
+  // 높은 배속은 영상 해독이 못 따라가서 실제로는 덜 빨라질 수 있다 (누르면 실제 속도를 재서 보여준다)
+  $('speedNote').hidden = speed < 6;
+  $('speedNote').textContent = speed >= 6
+    ? '높은 배속은 기기 성능을 많이 타요. 실제 속도가 설정보다 낮아지고 움직임이 조금 끊겨 보일 수 있어요. 소리도 알아듣기 어려우니 「소리 빼기」와 같이 쓰면 좋아요.'
+    : '';
+  refresh();
+};
 $('target').oninput = () => {
   [...$('sizeChips').children].forEach(c => c.setAttribute('aria-pressed', c.dataset.mb === $('target').value));
   refresh();
@@ -181,7 +189,7 @@ function refresh() {
     예상 용량 <b>최대 ${fmt(p.estBytes)}</b> <span class="muted">(보통 이보다 작게 나와요)</span> ${p.limitedBySource ? '<span class="muted">(원본 화질이 한계라 목표보다 작게 나와요)</span>' : `<span class="muted">(목표 ${p.targetMB}MB 이하)</span>`}<br>
     예상 화질 <b>${p.w}×${p.h}</b> <span class="muted">· ${quality(p.videoBps)}</span><br>
     영상 길이 <b>${clock(p.outDur)}</b> <span class="muted">${speed !== 1 ? `· ${speed}배속 (원본 ${clock(meta.dur)})` : ''}${p.mute ? ' · 소리 없음' : ''}</span><br>
-    <span class="muted">걸리는 시간 약 ${clock(p.outDur)} — 영상을 재생하면서 압축해요</span>`;
+    <span class="muted">걸리는 시간 약 ${clock(p.outDur)}${speed >= 6 ? ' 이상' : ''} — 영상을 재생하면서 압축해요</span>`;
 }
 
 /* ---------- 압축 ---------- */
@@ -199,12 +207,13 @@ $('go').onclick = async () => {
           ? `압축 중... 약 ${clock(est.outDur)} 걸려요. 화면을 켜 둔 채 기다려 주세요.`
           : `조금 더 줄이는 중... (${n}번째 시도)`;
       },
+      onMeasure: () => { $('status').textContent = '실제 배속을 재는 중...'; },
       onPause: paused => {
         if (paused) $('status').textContent = '⏸ 다른 화면으로 넘어가서 잠시 멈췄어요. 이 화면으로 돌아오면 이어서 합니다.';
         else $('status').textContent = '다시 압축하는 중...';
       },
     });
-    show(r.blob, r.plan, r.withinTarget, r.warnings);
+    show(r.blob, r.plan, r.withinTarget, r.warnings, r.actualSpeed);
   } catch (e) {
     $('status').textContent = '오류: ' + e.message;
   } finally {
@@ -214,7 +223,7 @@ $('go').onclick = async () => {
 };
 
 /* ---------- 결과 / 저장 ---------- */
-function show(blob, p, ok, warnings = []) {
+function show(blob, p, ok, warnings = [], actualSpeed = 0) {
   const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
   // 파일 이름에 한글이 있으면 일부 앱이 거부해서 영문·숫자만 쓴다
   const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
@@ -223,8 +232,12 @@ function show(blob, p, ok, warnings = []) {
   $('out').src = url;
   $('dl').href = url;
   $('dl').download = name;
+  // 실제로 나온 배속이 설정값보다 낮으면 (해독 속도 한계) 그대로 알려준다
+  const shown = actualSpeed ? Math.round(actualSpeed * 10) / 10 : speed;
+  const speedText = speed === 1 ? ''
+    : ` · ${shown}배속${actualSpeed && shown < speed - 0.3 ? ` <span class="muted">(${speed}배로 설정했지만 기기 속도가 여기까지예요)</span>` : ''}`;
   $('info').innerHTML = `${fmt(file.size)} → <b>${fmt(blob.size)}</b> · ${p.w}×${p.h} · ${ext.toUpperCase()}`
-    + `${speed !== 1 ? ` · ${speed}배속` : ''}${p.mute ? ' · 소리 없음' : ''}`
+    + `${speedText}${p.mute ? ' · 소리 없음' : ''}`
     + (ok ? '' : `<br><span style="color:#dc2626">목표 ${p.targetMB}MB를 넘었어요. 배속을 올리거나 목표를 키워보세요.</span>`)
     + warnings.map(w => `<br><span style="color:#dc2626">⚠️ ${w}</span>`).join('');
   $('status').textContent = '완료!';

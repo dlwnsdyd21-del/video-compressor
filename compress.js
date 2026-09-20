@@ -24,23 +24,61 @@ export async function probe(file) {
   }
 }
 
+/* 브라우저가 받아주는 최대 배속. 이보다 크게 넣으면 NotSupportedError 가 나고
+   playbackRate 가 1 로 되돌아간다(= 배속이 통째로 무시된다). 측정값: 16 까지 OK, 17 부터 오류. */
+export const MAX_SPEED = 15;
+
+/* 실제로 낼 수 있는 배속을 짧게 재 본다.
+   15배로 설정해도 영상을 해독하는 속도가 못 따라가면 실제로는 10~12배에 그친다
+   (휴대폰은 더 낮다). 미리 재 두면 예상 용량·시간을 맞게 보여줄 수 있다. */
+export async function measureSpeed(file, speed, ms = 800) {
+  if (speed <= 1) return speed;
+  const url = URL.createObjectURL(file);
+  try {
+    const v = await loadVideo(url);
+    v.muted = true;
+    try { v.playbackRate = speed; } catch { return speed; }
+    // 앞부분은 버퍼링 때문에 느릴 수 있어 조금 건너뛰고 잰다
+    v.currentTime = Math.min(1, v.duration / 4);
+    await new Promise(r => { v.onseeked = r; setTimeout(r, 500); });
+    const t0 = v.currentTime, w0 = performance.now();
+    try { await v.play(); } catch { return speed; }
+    await new Promise(r => setTimeout(r, ms));
+    const measured = (v.currentTime - t0) / ((performance.now() - w0) / 1000);
+    v.pause();
+    if (!isFinite(measured) || measured <= 0) return speed;
+    return Math.min(speed, Math.max(1, measured));
+  } catch {
+    return speed;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 /* 비트레이트에 맞는 세로 해상도 */
 const heightFor = bps => bps > 2500000 ? 1080 : bps > 1200000 ? 720 : bps > 600000 ? 480 : bps > 300000 ? 360 : 240;
 
 /* 목표 용량·배속·음소거로부터 인코딩 계획과 예상치를 계산 */
-export function plan(meta, { targetMB = 10, speed = 1, mute = false } = {}) {
+export function plan(meta, { targetMB = 10, speed = 1, mute = false, realSpeed = 0 } = {}) {
   const limit = Math.max(1, targetMB) * MB;
-  const outDur = meta.dur / speed;
+  speed = Math.min(Math.max(speed, 0.5), MAX_SPEED);
+  // realSpeed(실측 배속)가 있으면 그걸로 결과 길이를 잡는다. 없으면 설정값 그대로.
+  const effective = realSpeed > 0 ? Math.min(realSpeed, speed) : speed;
+  const outDur = meta.dur / effective;
   const audioBps = mute ? 0 : 64000;
   // 목표보다 8% 작게 잡아 여유를 둔다 (MediaRecorder는 비트레이트를 정확히 지키지 않는다)
   const wanted = Math.max(80000, Math.floor(limit * 8 * 0.92 / outDur) - audioBps);
-  // 원본보다 좋은 화질로 만들 수는 없다
-  const srcBps = meta.size * 8 / meta.dur * speed;
-  const videoBps = Math.round(Math.min(wanted, srcBps * 0.98));
+  /* 두 가지 한계로 잘라 낸다.
+     1) 원본보다 좋은 화질로 만들 수는 없다 (배속을 쓰면 1초에 담기는 내용이 늘어난다)
+     2) 브라우저 인코더가 실제로 낼 수 있는 상한 (없으면 "15배속 1초짜리에 9MB" 같은
+        터무니없는 예상치가 나온다) */
+  const srcBps = meta.size * 8 / meta.dur * effective;
+  const MAX_VIDEO_BPS = 12000000;
+  const videoBps = Math.round(Math.min(wanted, srcBps * 0.98, MAX_VIDEO_BPS));
   const h = heightFor(videoBps);
   const scale = Math.min(1, h / Math.min(meta.w, meta.h));
   return {
-    limit, targetMB, outDur, speed, mute, audioBps, videoBps,
+    limit, targetMB, outDur, speed, effective, mute, audioBps, videoBps,
     w: Math.round(meta.w * scale / 2) * 2,
     h: Math.round(meta.h * scale / 2) * 2,
     estBytes: Math.min(limit * 0.92, (videoBps + audioBps) * outDur / 8),
@@ -69,7 +107,9 @@ export function pickMime() {
 function record(url, meta, p, factor, onProgress, onPause) {
   return loadVideo(url).then(v => new Promise((res, rej) => {
     v.muted = false;
-    v.playbackRate = p.speed;
+    /* 범위를 벗어난 값을 넣으면 예외가 나면서 배속이 1 로 되돌아간다 — 반드시 막는다 */
+    try { v.playbackRate = Math.min(Math.max(p.speed, 0.5), MAX_SPEED); }
+    catch { v.playbackRate = 1; }
 
     const canvas = document.createElement('canvas');
     canvas.width = p.w; canvas.height = p.h;
@@ -185,8 +225,15 @@ export async function repackage(blob) {
 }
 
 /* 전체 과정: 목표 용량에 맞을 때까지 최대 4번 녹화 → 다시 포장 */
-export async function compress(file, meta, opts, { onProgress, onAttempt, onPause } = {}) {
-  const p = plan(meta, opts);
+export async function compress(file, meta, opts, { onProgress, onAttempt, onPause, onMeasure } = {}) {
+  /* 배속을 쓰면 먼저 실제로 낼 수 있는 속도를 재고, 그 값으로 계획을 세운다.
+     그래야 목표 용량을 한 번에 맞추고, 남은 시간도 맞게 보여줄 수 있다. */
+  let p = plan(meta, opts);
+  if (opts.speed > 1) {
+    onMeasure?.();
+    const realSpeed = await measureSpeed(file, p.speed);
+    p = plan(meta, { ...opts, realSpeed });
+  }
   const url = URL.createObjectURL(file);
   try {
     let factor = 1, out, attempt;
@@ -197,8 +244,11 @@ export async function compress(file, meta, opts, { onProgress, onAttempt, onPaus
       factor *= (p.limit / out.blob.size) * 0.9;
     }
     const packed = await repackage(out.blob);
+    // 실제로 나온 배속 (영상 해독이 못 따라가면 설정값보다 낮다)
+    const outSeconds = packed.info?.tracks?.reduce((s, t) => Math.max(s, t.seconds), 0) || 0;
+    const actualSpeed = outSeconds > 0 ? meta.dur / outSeconds : p.effective;
     return {
-      blob: packed.blob, plan: p, attempts: Math.min(attempt, 4),
+      blob: packed.blob, plan: p, attempts: Math.min(attempt, 4), actualSpeed,
       remuxed: packed.remuxed, info: packed.info, warnings: packed.warnings || [],
       withinTarget: packed.blob.size <= p.limit,
     };
