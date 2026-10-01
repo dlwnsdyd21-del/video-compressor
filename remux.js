@@ -216,9 +216,23 @@ export function remuxToProgressiveMp4(input, info = {}) {
      화면 쪽에서 사용자에게 경고할 수 있다. */
   info.tracks = active.map(t => {
     const last = t.samples[t.samples.length - 1];
+    /* 샘플 사이의 가장 큰 간격. 영상 트랙에서 이 값이 크면 그 구간 동안 새 프레임이
+       없었다는 뜻 — 재생할 때 화면이 그만큼 멈춰 보인다 (녹화 중 캔버스가 멈춘 경우).
+       단, 맨 앞 2초는 빼고 센다. 녹화를 시작한 직후에는 원본 재생이 시작되기까지
+       같은 화면이 1초 안팎 유지되는 것이 정상이고, 그걸 고장으로 볼 수는 없다. */
+    const SKIP = 2 * t.timescale;
+    let maxGap = 0, gapAt = 0, startHold = 0;
+    for (let i = 1; i < t.samples.length; i++) {
+      const gap = t.samples[i].dts - t.samples[i - 1].dts;
+      if (t.samples[i - 1].dts < SKIP) { if (gap > startHold) startHold = gap; continue; }
+      if (gap > maxGap) { maxGap = gap; gapAt = t.samples[i - 1].dts; }
+    }
     return { type: t.handler === 'vide' ? 'video' : t.handler === 'soun' ? 'audio' : t.handler,
              seconds: +((last.dts + last.duration) / t.timescale).toFixed(2),
-             samples: t.samples.length };
+             samples: t.samples.length,
+             maxGapSeconds: +(maxGap / t.timescale).toFixed(2),
+             maxGapAtSeconds: +(gapAt / t.timescale).toFixed(2),
+             startHoldSeconds: +(startHold / t.timescale).toFixed(2) };
   });
 
   /* ── 트랙별 시작 시각(초) — 늦게 시작하는 트랙은 나중에 edts/elst 로 맞춘다 ── */

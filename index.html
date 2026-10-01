@@ -85,6 +85,7 @@
 
     <div id="estimate" hidden></div>
     <button class="main" id="go" disabled>압축 시작</button>
+    <button class="main" id="cancel" hidden style="background:var(--soft);color:var(--text);border:1px solid var(--line)">취소</button>
     <div class="bar"><div id="prog"></div></div>
     <div id="status"></div>
   </div>
@@ -193,34 +194,72 @@ function refresh() {
 }
 
 /* ---------- 압축 ---------- */
+/* 화면 꺼짐 방지. 화면이 한 번 꺼졌다 켜지면 잠금이 풀려 버리므로 돌아올 때마다 다시 건다. */
+let wake = null, keepAwake = false;
+async function requestWake() {
+  if (!keepAwake) return;
+  try { wake = await navigator.wakeLock?.request('screen'); } catch {}
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) requestWake(); });
+
+let abort = null;
+
 $('go').onclick = async () => {
   $('go').disabled = true; $('result').hidden = true;
-  let wake = null;
-  try { wake = await navigator.wakeLock?.request('screen'); } catch {}
+  $('cancel').hidden = false;
+  abort = new AbortController();
+  keepAwake = true; await requestWake();
+
+  const est = makePlan(meta, opts());
+  const startedAt = performance.now();
+  let paused = false, pausedMs = 0, pausedAt = 0, attemptNo = 1, attemptMax = 1;
+
+  // 남은 시간을 1초마다 갱신해서, 멈춘 건지 진행 중인지 눈에 보이게 한다
+  let shownProgress = 0;
+  const ticker = setInterval(() => {
+    if (paused) return;
+    const elapsed = (performance.now() - startedAt - pausedMs) / 1000;
+    const left = shownProgress > 0.02 ? elapsed * (1 - shownProgress) / shownProgress : est.outDur;
+    $('status').textContent =
+      `압축 중 ${(shownProgress * 100).toFixed(0)}% · 남은 시간 약 ${clock(Math.max(0, left))}`
+      + (attemptMax > 1 && attemptNo > 1 ? ` · ${attemptNo}번째 시도` : '')
+      + ' — 이 화면을 켜 둔 채 기다려 주세요.';
+  }, 1000);
+
   try {
-    const est = makePlan(meta, opts());
     const r = await compress(file, meta, opts(), {
-      onProgress: f => { $('prog').style.width = (f * 100).toFixed(1) + '%'; },
-      onAttempt: n => {
+      signal: abort.signal,
+      onProgress: f => { shownProgress = f; $('prog').style.width = (f * 100).toFixed(1) + '%'; },
+      onAttempt: (n, total) => {
+        attemptNo = n; attemptMax = total; shownProgress = 0;
         $('prog').style.width = '0%';
-        $('status').textContent = n === 1
-          ? `압축 중... 약 ${clock(est.outDur)} 걸려요. 화면을 켜 둔 채 기다려 주세요.`
-          : `조금 더 줄이는 중... (${n}번째 시도)`;
+        if (n > 1) $('status').textContent = `목표 용량에 맞추려고 한 번 더 줄이는 중... (${n}/${total})`;
       },
       onMeasure: () => { $('status').textContent = '실제 배속을 재는 중...'; },
-      onPause: paused => {
-        if (paused) $('status').textContent = '⏸ 다른 화면으로 넘어가서 잠시 멈췄어요. 이 화면으로 돌아오면 이어서 합니다.';
-        else $('status').textContent = '다시 압축하는 중...';
+      onPause: isPaused => {
+        paused = isPaused;
+        if (isPaused) { pausedAt = performance.now(); $('status').textContent = '⏸ 다른 화면으로 넘어가서 잠시 멈췄어요. 이 화면으로 돌아오면 이어서 합니다.'; }
+        else { pausedMs += performance.now() - pausedAt; }
+      },
+      onStall: stalled => {
+        if (stalled) $('status').textContent = '영상 읽기가 멈춰서 다시 시도하는 중... (계속 안 되면 지금까지 압축한 부분까지만 저장해요)';
       },
     });
     show(r.blob, r.plan, r.withinTarget, r.warnings, r.actualSpeed);
   } catch (e) {
-    $('status').textContent = '오류: ' + e.message;
+    $('status').textContent = e.name === 'AbortError' ? '취소했어요.' : '오류: ' + e.message;
+    $('prog').style.width = '0%';
   } finally {
-    wake?.release?.();
+    clearInterval(ticker);
+    keepAwake = false;
+    try { await wake?.release?.(); } catch {}
+    wake = null; abort = null;
+    $('cancel').hidden = true;
     $('go').disabled = false;
   }
 };
+
+$('cancel').onclick = () => { abort?.abort(); $('cancel').hidden = true; };
 
 /* ---------- 결과 / 저장 ---------- */
 function show(blob, p, ok, warnings = [], actualSpeed = 0) {

@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ko">
+<head><meta charset="utf-8"><title>compress.js 고장 상황 테스트</title>
+<style>body{font-family:monospace;padding:16px;background:#111;color:#ddd;white-space:pre-wrap}.ok{color:#5d5}.bad{color:#f77}</style>
+</head>
+<body>
+<h3>compress.js 고장 상황 테스트</h3>
+<pre id="log">준비 중...</pre>
+<script type="module">
+/* 사용자가 겪은 두 증상을 일부러 만들어 보고, 고친 코드가 버티는지 확인한다.
+
+   case=normal   : 정상 녹화 — 화면이 멈춘 구간이 없어야 한다
+   case=norAF    : 녹화 도중 requestAnimationFrame 이 죽는다 (창이 다른 창에 덮인 상황).
+                   예전 코드는 여기서 영상만 정지하고 소리만 계속됐다.
+   case=stall    : 녹화 도중 재생이 멈춘다 (디코딩이 막힌 상황).
+                   예전 코드는 ended 이벤트를 영원히 기다리며 끝나지 않았다.
+   case=hidden   : 숨겨진 채로 시작 → 잠시 뒤 보이게 → 끝까지 가야 한다
+*/
+import { probe, compress } from '../compress.js';
+
+const q = new URLSearchParams(location.search);
+const CASE = q.get('case') || 'normal';
+const SRC = q.get('src') || '/fixture.mp4';
+const targetMB = +(q.get('target') || 5);
+const speed = +(q.get('speed') || 4);
+const el = document.getElementById('log');
+const lines = [];
+const say = (s, cls) => {
+  lines.push(cls ? `<span class="${cls}">${s}</span>` : s);
+  el.innerHTML = lines.join('\n');
+  fetch('/log', { method: 'POST', body: `[${CASE}] ` + s.replace(/<[^>]+>/g, '') }).catch(() => {});
+};
+
+/* 테스트가 만들어지는 <video> 를 붙잡아 둔다 (멈춤을 흉내 내려면 필요하다) */
+const videos = [];
+const origCreate = document.createElement.bind(document);
+document.createElement = function (tag, ...rest) {
+  const node = origCreate(tag, ...rest);
+  if (String(tag).toLowerCase() === 'video') videos.push(node);
+  return node;
+};
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+try {
+  const buf = await (await fetch(SRC)).blob();
+  const file = new File([buf], 'fixture.mp4', { type: 'video/mp4' });
+  const meta = await probe(file);
+  say(`원본 ${(file.size / 1048576).toFixed(2)}MB · ${meta.w}x${meta.h} · ${meta.dur.toFixed(1)}초`);
+
+  // 고장 상황 주입
+  if (CASE === 'norAF') {
+    setTimeout(() => {
+      window.requestAnimationFrame = () => 0;      // 이후로 rAF 는 영원히 안 불린다
+      say('→ requestAnimationFrame 을 죽였다 (창이 덮인 상황)');
+    }, 1500);
+  }
+  if (CASE === 'stall' || CASE === 'stall-early') {
+    // 한참 압축하다가 멈추는 상황(stall)과, 시작하자마자 멈추는 상황(stall-early)
+    const freezeAfter = CASE === 'stall' ? 4 : 0.2;   // 원본 재생 위치 기준(초)
+    (async () => {
+      for (let i = 0; i < 600; i++) {
+        await sleep(100);
+        const v = [...videos].reverse().find(x => !x.paused && x.currentTime > freezeAfter);
+        if (!v) continue;
+        v.playbackRate = 0;   // 실제로 시간이 안 흐르게 (paused 는 false 그대로 = 멈춤)
+        Object.defineProperty(v, 'playbackRate', { get: () => 0, set: () => {} });
+        say(`→ ${v.currentTime.toFixed(1)}초 지점에서 재생을 멈춰 세웠다 (디코딩이 막힌 상황)`);
+        return;
+      }
+      say('→ 멈출 대상을 못 찾음', 'bad');
+    })();
+  }
+  if (CASE === 'hidden') {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    say('→ 화면이 가려진 상태로 시작');
+    setTimeout(() => {
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+      document.dispatchEvent(new Event('visibilitychange'));
+      say('→ 화면으로 돌아옴');
+    }, 3000);
+  }
+
+  const t0 = performance.now();
+  const WATCHDOG = 120000;
+  const r = await Promise.race([
+    compress(file, meta, { targetMB, speed }, {
+      onAttempt: n => say(`녹화 ${n}번째 시도...`),
+      onStall: s => s && say('→ 멈춤 감지, 되살리는 중'),
+      onPause: p => say(p ? '→ 일시정지' : '→ 재개'),
+    }),
+    sleep(WATCHDOG).then(() => { throw new Error(`${WATCHDOG / 1000}초가 지나도 안 끝남 (= 무한 대기 버그)`); }),
+  ]);
+  const secs = (performance.now() - t0) / 1000;
+
+  const v = r.info?.tracks?.find(t => t.type === 'video');
+  const a = r.info?.tracks?.find(t => t.type === 'audio');
+  say(`끝남: ${(r.blob.size / 1048576).toFixed(2)}MB · ${secs.toFixed(1)}초 걸림 · 종료사유=${r.reason} · 시도=${r.attempts}`);
+  say(`영상트랙 ${v?.seconds}초(${v?.samples}프레임) / 소리트랙 ${a?.seconds}초`);
+  say(`화면이 멈춘 최대 구간: ${v?.maxGapSeconds}초 (${v?.maxGapAtSeconds}초 지점) · 시작 직후 유지 ${v?.startHoldSeconds}초`);
+  if (r.warnings.length) r.warnings.forEach(w => say('경고: ' + w));
+
+  // 판정
+  const checks = [];
+  checks.push(['끝까지 진행됨', secs < WATCHDOG / 1000]);
+  checks.push(['영상 트랙이 1초 이상', (v?.seconds || 0) >= 1]);
+  if (CASE === 'normal' || CASE === 'norAF' || CASE === 'hidden') {
+    checks.push(['화면이 멈춘 구간 1초 미만 (시작 직후 제외)', (v?.maxGapSeconds ?? 99) < 1]);
+    checks.push(['영상·소리 길이 차이 1.5초 미만', Math.abs((v?.seconds || 0) - (a?.seconds || 0)) < 1.5]);
+  }
+  if (CASE === 'stall') {
+    checks.push(['멈춤을 감지해 스스로 종료', r.reason === 'stalled']);
+    checks.push(['30초 안에 끝남', secs < 30]);
+    // 멈춘 뒤로 정지 화면이 길게 쌓이면 안 된다 (멈춘 시점까지만 남아야 한다)
+    checks.push(['정지 화면 꼬리가 3초 미만', (v?.maxGapSeconds ?? 99) < 3]);
+  }
+  checks.forEach(([name, ok]) => say(`${ok ? 'PASS' : 'FAIL'}  ${name}`, ok ? 'ok' : 'bad'));
+  say(checks.every(c => c[1]) ? 'RESULT=PASS' : 'RESULT=FAIL', checks.every(c => c[1]) ? 'ok' : 'bad');
+} catch (e) {
+  const msg = e && e.message || String(e);
+  // 시작하자마자 멈추는 경우엔 "읽을 수 없다"고 분명히 알려주는 게 올바른 동작이다
+  if (CASE === 'stall-early' && /읽지 못해요/.test(msg)) {
+    say('분명한 오류로 끝남: ' + msg);
+    say('PASS  시작 직후 멈춤은 쓸 수 없는 결과 대신 오류로 알림', 'ok');
+    say('RESULT=PASS', 'ok');
+  } else {
+    say('RESULT=FAIL  ' + msg, 'bad');
+  }
+}
+say('DONE');
+</script>
+</body>
+</html>
